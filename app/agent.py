@@ -16,12 +16,12 @@ Rules:
 - If unsure, say you will follow up
 """
 
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input=[
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
         ]
     )
 
-    return response.output_text
+    return response.choices[0].message.content
