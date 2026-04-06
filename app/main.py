@@ -78,6 +78,21 @@ def chat(agent_id: str, req: ChatRequest):
     if not agent_data:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    # Always fetch latest status from Supabase (dashboard deactivate/activate)
+    try:
+        status_result = (
+            supabase
+            .table("agents")
+            .select("status")
+            .eq("agent_id", agent_id)
+            .single()
+            .execute()
+        )
+        if status_result.data:
+            agent_data["status"] = status_result.data.get("status", "active")
+    except Exception:
+        pass
+
     if agent_data.get("status") == "inactive":
         raise HTTPException(status_code=403, detail="Agent is inactive")
 
