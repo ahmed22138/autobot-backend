@@ -4,13 +4,9 @@ from uuid import UUID
 
 # 1️⃣ Agent Create Request
 class AgentCreate(BaseModel):
-    name: str = Field(..., example="Ahmed Support Bot", min_length=3)
-    description: str = Field(
-        ...,
-        example="Frontend developer helping clients with UI, bugs, and performance",
-        min_length=10
-    )
-    tone: str = Field(..., example="friendly", min_length=3)
+    name: str = Field(..., example="Ahmed Support Bot")
+    description: str = Field(..., example="Frontend developer helping clients with UI, bugs, and performance")
+    tone: str = Field(..., example="friendly")
 
 
 # 2️⃣ Chat Request
