@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from uuid import UUID
 
 # 1️⃣ Agent Create Request
@@ -14,6 +14,7 @@ class AgentCreate(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(default="", example="How can you help me?")
     image: Optional[str] = Field(default=None, description="Base64 encoded image for payment screenshot verification")
+    conversation_history: Optional[List[Dict[str, Any]]] = Field(default=[], description="Previous messages for context")
 
 
 # 3️⃣ Chat Response

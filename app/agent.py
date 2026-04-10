@@ -167,7 +167,7 @@ Be strict — only verify if the account number exactly matches."""
     return response.choices[0].message.content
 
 
-def run_agent(agent_data, user_message, image_base64: str = None):
+def run_agent(agent_data, user_message, image_base64: str = None, conversation_history: list = []):
     agent_type = agent_data.get("type", "general")
     type_instructions = TYPE_PROMPTS.get(agent_type, TYPE_PROMPTS["general"])
 
@@ -198,6 +198,11 @@ Your Role ({agent_type} bot):
 {sales_context}"""
 
     messages = [{"role": "system", "content": system_prompt}]
+
+    # Add conversation history (only role + content, skip images in history)
+    for msg in conversation_history[:-1]:  # exclude last message (current one)
+        if msg.get("role") in ("user", "assistant") and msg.get("content"):
+            messages.append({"role": msg["role"], "content": str(msg["content"])})
 
     if image_base64:
         # Non-sales bot with image — just describe it
