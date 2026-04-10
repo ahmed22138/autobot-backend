@@ -15,17 +15,26 @@ CONVERSATION FLOW:
 1. Greet the customer and show available products with prices
 2. Help them choose a product
 3. Collect: Full Name, Email, Phone Number, Delivery Address
-4. Show payment options and give payment details
-5. Ask for payment screenshot as proof
-6. Confirm order and thank the customer
+4. Ask which payment method they prefer
+5. Show FULL payment details for that method (name + number/account) exactly like this:
+
+   ═══════════════════════════
+   💳 Payment Details
+   ═══════════════════════════
+   [Method Name e.g. EasyPaisa]
+   Name:   [Account Holder Name]
+   Number: [Account Number]
+   Amount: PKR [product price]
+   ═══════════════════════════
+
+6. Tell customer: "Please send payment and share screenshot"
+7. After screenshot received and verified, confirm order
 
 RULES:
-- Always be helpful and friendly
-- Show product prices in PKR
-- If customer asks about a product not in the list, say it's not available
-- After collecting all customer info, create the order
-- For COD orders, confirm address and estimated delivery
-- For EasyPaisa/JazzCash/Bank orders, give exact account details and ask for screenshot
+- Always show Name AND Number/Account together — never just the number alone
+- Show PKR amount clearly
+- If COD: confirm delivery address and say cash will be collected on delivery
+- Be helpful and friendly throughout
 """,
     "support": """
 Your goal is to resolve customer issues quickly.
@@ -69,17 +78,36 @@ def get_sales_context(agent_id: str) -> str:
         else:
             context += "\n\nNo products added yet.\n"
 
-        # Payment methods
+        # Payment methods — formatted exactly as bot should show to customer
         if payment:
-            context += "\nPAYMENT METHODS ACCEPTED:\n"
-            if payment.get('cash_on_delivery'):
-                context += "- Cash on Delivery (COD)\n"
+            context += "\nPAYMENT METHODS (show EXACTLY like this to customer):\n"
+
             if payment.get('easypaisa_number'):
-                context += f"- EasyPaisa: {payment['easypaisa_number']}\n"
+                name = payment.get('easypaisa_account_name', '')
+                context += f"\n📱 EasyPaisa\n"
+                if name:
+                    context += f"   Name:   {name}\n"
+                context += f"   Number: {payment['easypaisa_number']}\n"
+
             if payment.get('jazzcash_number'):
-                context += f"- JazzCash: {payment['jazzcash_number']}\n"
+                name = payment.get('jazzcash_account_name', '')
+                context += f"\n📱 JazzCash\n"
+                if name:
+                    context += f"   Name:   {name}\n"
+                context += f"   Number: {payment['jazzcash_number']}\n"
+
             if payment.get('bank_account'):
-                context += f"- Bank Transfer: {payment.get('bank_name', '')} | Account: {payment['bank_account']} | Name: {payment.get('bank_account_name', '')}\n"
+                context += f"\n🏦 Bank Transfer\n"
+                if payment.get('bank_name'):
+                    context += f"   Bank:    {payment['bank_name']}\n"
+                if payment.get('bank_account_name'):
+                    context += f"   Name:    {payment['bank_account_name']}\n"
+                context += f"   Account: {payment['bank_account']}\n"
+
+            if payment.get('cash_on_delivery'):
+                context += f"\n🚚 Cash on Delivery (COD) available\n"
+
+        context += "\nIMPORTANT: When customer selects a payment method, show ALL details of that method (name + number/account) clearly so they can make the payment easily.\n"
 
         return context
     except Exception:
