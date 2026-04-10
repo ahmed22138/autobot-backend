@@ -36,6 +36,7 @@ def create_agent(data: AgentCreate):
         "name": data.name,
         "description": data.description,
         "tone": data.tone,
+        "type": data.type,
     }
 
     # Save to in-memory store (always works)

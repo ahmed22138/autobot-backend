@@ -7,6 +7,7 @@ class AgentCreate(BaseModel):
     name: str = Field(..., example="Ahmed Support Bot")
     description: str = Field(..., example="Frontend developer helping clients with UI, bugs, and performance")
     tone: str = Field(..., example="friendly")
+    type: str = Field(default="general", example="sales")
 
 
 # 2️⃣ Chat Request
