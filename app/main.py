@@ -97,6 +97,6 @@ def chat(agent_id: str, req: ChatRequest):
     if agent_data.get("status") == "inactive":
         raise HTTPException(status_code=403, detail="Agent is inactive")
 
-    reply = run_agent(agent_data, req.message)
+    reply = run_agent(agent_data, req.message, req.image)
 
     return ChatResponse(reply=reply)

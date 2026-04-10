@@ -12,7 +12,8 @@ class AgentCreate(BaseModel):
 
 # 2️⃣ Chat Request
 class ChatRequest(BaseModel):
-    message: str = Field(..., example="How can you help me?")
+    message: str = Field(default="", example="How can you help me?")
+    image: Optional[str] = Field(default=None, description="Base64 encoded image for payment screenshot verification")
 
 
 # 3️⃣ Chat Response

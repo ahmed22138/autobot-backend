@@ -86,14 +86,79 @@ def get_sales_context(agent_id: str) -> str:
         return ""
 
 
-def run_agent(agent_data, user_message):
+def verify_payment_screenshot(image_base64: str, payment_config: dict, expected_amount: float = None) -> str:
+    """Use GPT-4o Vision to verify payment screenshot against owner's account details"""
+
+    # Build what to look for
+    valid_accounts = []
+    if payment_config.get("easypaisa_number"):
+        name = payment_config.get("easypaisa_account_name", "")
+        valid_accounts.append(f"EasyPaisa: {payment_config['easypaisa_number']}" + (f" ({name})" if name else ""))
+    if payment_config.get("jazzcash_number"):
+        name = payment_config.get("jazzcash_account_name", "")
+        valid_accounts.append(f"JazzCash: {payment_config['jazzcash_number']}" + (f" ({name})" if name else ""))
+    if payment_config.get("bank_account"):
+        valid_accounts.append(f"Bank: {payment_config.get('bank_name','')} | {payment_config['bank_account']} | {payment_config.get('bank_account_name','')}")
+
+    accounts_str = "\n".join(valid_accounts) if valid_accounts else "No payment accounts configured"
+    amount_check = f"\n- Amount should be PKR {expected_amount}" if expected_amount else ""
+
+    verification_prompt = f"""Analyze this payment screenshot carefully.
+
+OWNER'S VALID PAYMENT ACCOUNTS:
+{accounts_str}{amount_check}
+
+Check the screenshot and tell me:
+1. Was payment made to one of the owner's accounts listed above? (yes/no)
+2. What account number/name appears in the screenshot?
+3. What amount was transferred?
+4. Is this a valid completed transaction? (not pending/failed)
+
+If everything matches → reply starting with "✅ VERIFIED:"
+If payment went to wrong account → reply starting with "❌ WRONG ACCOUNT:"
+If amount is wrong → reply starting with "❌ WRONG AMOUNT:"
+If screenshot is unclear/fake → reply starting with "❌ INVALID:"
+
+Be strict — only verify if the account number exactly matches."""
+
+    # Clean base64 if it has data URI prefix
+    if "," in image_base64:
+        image_base64 = image_base64.split(",")[1]
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": verification_prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+            ]
+        }],
+        max_tokens=300
+    )
+    return response.choices[0].message.content
+
+
+def run_agent(agent_data, user_message, image_base64: str = None):
     agent_type = agent_data.get("type", "general")
     type_instructions = TYPE_PROMPTS.get(agent_type, TYPE_PROMPTS["general"])
 
     # For sales bot, fetch products + payment info
     sales_context = ""
+    payment_config = {}
     if agent_type == "sales":
         sales_context = get_sales_context(agent_data.get("agent_id", ""))
+        # Also fetch payment config for verification
+        try:
+            supabase = get_supabase()
+            result = supabase.table("agent_payment_config").select("*").eq("agent_id", agent_data.get("agent_id", "")).single().execute()
+            payment_config = result.data or {}
+        except Exception:
+            pass
+
+    # Handle screenshot verification
+    if image_base64 and agent_type == "sales" and payment_config:
+        return verify_payment_screenshot(image_base64, payment_config)
 
     system_prompt = f"""You are {agent_data['name']}, an AI assistant.
 
@@ -104,12 +169,28 @@ Your Role ({agent_type} bot):
 {type_instructions}
 {sales_context}"""
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
-    )
+    messages = [{"role": "system", "content": system_prompt}]
 
+    if image_base64:
+        # Non-sales bot with image — just describe it
+        if "," in image_base64:
+            clean_b64 = image_base64.split(",")[1]
+        else:
+            clean_b64 = image_base64
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": user_message or "What is in this image?"},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{clean_b64}"}}
+            ]
+        })
+        model = "gpt-4o"
+    else:
+        messages.append({"role": "user", "content": user_message})
+        model = "gpt-4o-mini"
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages
+    )
     return response.choices[0].message.content
