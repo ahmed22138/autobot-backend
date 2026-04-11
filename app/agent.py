@@ -45,12 +45,29 @@ Your goal is to resolve customer issues quickly.
 - Always confirm if the issue is resolved
 """,
     "general": """
-Your goal is to be a helpful AI assistant.
-- Answer questions clearly and concisely
-- Stay on topic based on your description
-- If unsure, say you will follow up
+Your goal is to answer questions ONLY from the knowledge base provided.
+
+RULES:
+- Answer ONLY based on the knowledge base content below
+- If the question is not covered in the knowledge base, say: "I don't have information about that. Please contact us directly."
+- Do NOT make up answers or use outside knowledge
+- Be helpful, clear, and concise
+- If user asks something related, find the closest answer in the knowledge base
 """
 }
+
+def get_general_context(agent_id: str) -> str:
+    """Fetch knowledge base for general bot"""
+    try:
+        supabase = get_supabase()
+        result = supabase.table("agents").select("knowledge_base").eq("agent_id", agent_id).single().execute()
+        kb = result.data.get("knowledge_base") if result.data else None
+        if kb:
+            return f"\n\nKNOWLEDGE BASE:\n{kb}\n"
+        return ""
+    except Exception:
+        return ""
+
 
 def get_sales_context(agent_id: str) -> str:
     """Fetch products and payment config for sales bot"""
@@ -171,11 +188,15 @@ def run_agent(agent_data, user_message, image_base64: str = None, conversation_h
     agent_type = agent_data.get("type", "general")
     type_instructions = TYPE_PROMPTS.get(agent_type, TYPE_PROMPTS["general"])
 
-    # For sales bot, fetch products + payment info
+    # Fetch extra context based on type
     sales_context = ""
+    general_context = ""
     payment_config = {}
+
     if agent_type == "sales":
         sales_context = get_sales_context(agent_data.get("agent_id", ""))
+    elif agent_type == "general":
+        general_context = get_general_context(agent_data.get("agent_id", ""))
         # Also fetch payment config for verification
         try:
             supabase = get_supabase()
@@ -195,7 +216,7 @@ Tone: {agent_data['tone']}
 
 Your Role ({agent_type} bot):
 {type_instructions}
-{sales_context}"""
+{sales_context}{general_context}"""
 
     messages = [{"role": "system", "content": system_prompt}]
 
