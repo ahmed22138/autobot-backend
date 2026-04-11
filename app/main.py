@@ -99,4 +99,22 @@ def chat(agent_id: str, req: ChatRequest):
 
     reply = run_agent(agent_data, req.message, req.image, req.conversation_history or [])
 
+    # Count message against agent owner's usage
+    try:
+        owner_id = agent_data.get("user_id")
+        if not owner_id:
+            # Fetch user_id from Supabase if not in memory
+            owner_result = supabase.table("agents").select("user_id").eq("agent_id", agent_id).single().execute()
+            owner_id = owner_result.data.get("user_id") if owner_result.data else None
+
+        if owner_id:
+            supabase.table("messages").insert({
+                "user_id": owner_id,
+                "agent_id": agent_id,
+                "role": "user",
+                "text": req.message or "[image]",
+            }).execute()
+    except Exception:
+        pass  # Don't fail chat if message counting fails
+
     return ChatResponse(reply=reply)
