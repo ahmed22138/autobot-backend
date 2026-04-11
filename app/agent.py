@@ -195,19 +195,22 @@ def run_agent(agent_data, user_message, image_base64: str = None, conversation_h
 
     if agent_type == "sales":
         sales_context = get_sales_context(agent_data.get("agent_id", ""))
-    elif agent_type == "general":
-        general_context = get_general_context(agent_data.get("agent_id", ""))
-        # Also fetch payment config for verification
+        # Fetch payment config for screenshot verification
         try:
             supabase = get_supabase()
             result = supabase.table("agent_payment_config").select("*").eq("agent_id", agent_data.get("agent_id", "")).single().execute()
             payment_config = result.data or {}
         except Exception:
             pass
+    elif agent_type == "general":
+        general_context = get_general_context(agent_data.get("agent_id", ""))
 
-    # Handle screenshot verification
-    if image_base64 and agent_type == "sales" and payment_config:
-        return verify_payment_screenshot(image_base64, payment_config)
+    # Handle screenshot verification (sales bot only)
+    if image_base64 and agent_type == "sales":
+        if payment_config:
+            return verify_payment_screenshot(image_base64, payment_config)
+        else:
+            return "⚠️ Payment details not configured yet. Please ask the shop owner to set up payment methods."
 
     system_prompt = f"""You are {agent_data['name']}, an AI assistant.
 

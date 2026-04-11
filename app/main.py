@@ -1,34 +1,80 @@
 import os
-from fastapi import FastAPI, HTTPException
-from uuid import uuid4
+from datetime import datetime, timezone
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from uuid import uuid4
 from app.database import supabase
 from app.agent import run_agent
-from app.schema import (
-    AgentCreate,
-    AgentResponse,
-    ChatRequest,
-    ChatResponse
-)
+from app.schema import AgentCreate, AgentResponse, ChatRequest, ChatResponse
 
-app = FastAPI(title="Autonomous AI Agent Platform")
+# ── Rate limiter ───────────────────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
+
+app = FastAPI(title="AutoBot Studio API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── CORS — only allow our frontend ────────────────────────────────────────────
+ALLOWED_ORIGINS = [
+    os.getenv("FRONTEND_URL", "https://autobot-studio.vercel.app"),
+    "https://autobot-studio.vercel.app",
+    "http://localhost:3000",
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
-# In-memory agent store (primary storage - no auth required)
-# Also tries to sync to Supabase
-agents_store: dict = {}
+# Plan message limits
+PLAN_LIMITS = {
+    "basic":   100,
+    "medium":  1000,
+    "premium": None,   # unlimited
+}
 
 
-# 🔹 CREATE AGENT
+# ── Helper: check owner message limit ─────────────────────────────────────────
+def check_message_limit(owner_id: str) -> tuple[bool, str]:
+    """Returns (allowed, reason). True = can proceed."""
+    try:
+        # Get owner's plan
+        sub = supabase.table("subscriptions").select("plan").eq("user_id", owner_id).single().execute()
+        plan = sub.data.get("plan", "basic") if sub.data else "basic"
+        limit = PLAN_LIMITS.get(plan)
+
+        if limit is None:
+            return True, ""  # premium = unlimited
+
+        # Count messages this month
+        start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        count_result = (
+            supabase.table("messages")
+            .select("*", count="exact", head=True)
+            .eq("user_id", owner_id)
+            .eq("role", "user")
+            .gte("created_at", start_of_month)
+            .execute()
+        )
+        used = count_result.count or 0
+
+        if used >= limit:
+            return False, f"Message limit reached ({used}/{limit}). Owner must upgrade plan."
+        return True, ""
+    except Exception:
+        return True, ""  # don't block on error
+
+
+# ── CREATE AGENT ──────────────────────────────────────────────────────────────
 @app.post("/create-agent", response_model=AgentResponse)
-def create_agent(data: AgentCreate):
+@limiter.limit("20/minute")
+def create_agent(request: Request, data: AgentCreate):
     agent_id = str(uuid4())
 
     agent_data = {
@@ -39,14 +85,10 @@ def create_agent(data: AgentCreate):
         "type": data.type,
     }
 
-    # Save to in-memory store (always works)
-    agents_store[agent_id] = agent_data
-
-    # Also try to save to Supabase (may fail if RLS/auth not configured)
     try:
         supabase.table("agents").insert(agent_data).execute()
     except Exception:
-        pass  # In-memory store is the fallback
+        pass
 
     return AgentResponse(
         agent_id=agent_id,
@@ -54,67 +96,54 @@ def create_agent(data: AgentCreate):
     )
 
 
-# 🔹 CHAT WITH AGENT
+# ── CHAT ──────────────────────────────────────────────────────────────────────
 @app.post("/chat/{agent_id}", response_model=ChatResponse)
-def chat(agent_id: str, req: ChatRequest):
+@limiter.limit("30/minute")
+def chat(agent_id: str, req: ChatRequest, request: Request):
 
-    # Check in-memory store first (fast)
-    agent_data = agents_store.get(agent_id)
-
-    # Fallback: try Supabase
-    if not agent_data:
-        try:
-            result = (
-                supabase
-                .table("agents")
-                .select("*")
-                .eq("agent_id", agent_id)
-                .single()
-                .execute()
-            )
-            agent_data = result.data
-        except Exception:
-            agent_data = None
-
-    if not agent_data:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    # Always fetch latest status from Supabase (dashboard deactivate/activate)
+    # Fetch agent from Supabase (single source of truth — no in-memory store)
     try:
-        status_result = (
-            supabase
-            .table("agents")
-            .select("status")
+        result = (
+            supabase.table("agents")
+            .select("*")
             .eq("agent_id", agent_id)
             .single()
             .execute()
         )
-        if status_result.data:
-            agent_data["status"] = status_result.data.get("status", "active")
+        agent_data = result.data
     except Exception:
-        pass
+        agent_data = None
 
+    if not agent_data:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Check agent status
     if agent_data.get("status") == "inactive":
         raise HTTPException(status_code=403, detail="Agent is inactive")
 
+    # Check owner's message limit
+    owner_id = agent_data.get("user_id")
+    if owner_id:
+        allowed, reason = check_message_limit(owner_id)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="This chatbot has reached its monthly message limit. Please try again next month."
+            )
+
+    # Run AI
     reply = run_agent(agent_data, req.message, req.image, req.conversation_history or [])
 
-    # Count message against agent owner's usage
-    try:
-        owner_id = agent_data.get("user_id")
-        if not owner_id:
-            # Fetch user_id from Supabase if not in memory
-            owner_result = supabase.table("agents").select("user_id").eq("agent_id", agent_id).single().execute()
-            owner_id = owner_result.data.get("user_id") if owner_result.data else None
-
-        if owner_id:
+    # Save message for usage tracking
+    if owner_id:
+        try:
             supabase.table("messages").insert({
                 "user_id": owner_id,
                 "agent_id": agent_id,
                 "role": "user",
                 "text": req.message or "[image]",
             }).execute()
-    except Exception:
-        pass  # Don't fail chat if message counting fails
+        except Exception:
+            pass
 
     return ChatResponse(reply=reply)

@@ -4,3 +4,4 @@ supabase>=2.27.2
 openai>=1.0.0
 openai-agents>=0.7.0
 python-dotenv>=1.0.0
+slowapi>=0.1.9
