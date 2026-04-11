@@ -19,17 +19,13 @@ app = FastAPI(title="AutoBot Studio API")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ── CORS — only allow our frontend ────────────────────────────────────────────
-ALLOWED_ORIGINS = [
-    os.getenv("FRONTEND_URL", "https://autobot-studio.vercel.app"),
-    "https://autobot-studio.vercel.app",
-    "http://localhost:3000",
-]
-
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# /chat/ must allow all origins — embed chatbot runs on external websites
+# /create-agent is protected by rate limiting
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
