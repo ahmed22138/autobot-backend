@@ -351,19 +351,33 @@ def chat(agent_id: str, req: ChatRequest, request: Request):
 
 
 # ── WHATSAPP WEBHOOK (Twilio) ─────────────────────────────────────────────────
+@app.post("/webhook/whatsapp")
 @app.post("/webhook/whatsapp/{agent_id}")
-async def whatsapp_webhook(agent_id: str, request: Request):
+async def whatsapp_webhook(request: Request, agent_id: str = None):
     """Receive WhatsApp message from Twilio, reply via agent"""
-    from twilio.rest import Client as TwilioClient
+    import asyncio
 
     form = await request.form()
     incoming_msg = form.get("Body", "").strip()
     from_number  = form.get("From", "")
 
-    logger.info(f"WhatsApp msg for agent {agent_id} from {from_number}: {incoming_msg}")
+    logger.info(f"WhatsApp msg from {from_number}: {incoming_msg}")
 
     if not incoming_msg or not from_number:
         return {"status": "ignored"}
+
+    # If no agent_id in URL → look up from whatsapp_integrations by user's registered number
+    if not agent_id:
+        try:
+            # Find integration where the FROM number matches a registered user phone
+            result = supabase.table("whatsapp_integrations").select("agent_id").eq("status", "active").limit(1).execute()
+            if result.data:
+                agent_id = result.data[0]["agent_id"]
+        except Exception:
+            pass
+
+    if not agent_id:
+        return {"status": "no_integration"}
 
     # Fetch agent
     agent_data = get_cached_agent(agent_id)
