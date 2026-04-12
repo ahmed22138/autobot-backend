@@ -390,9 +390,10 @@ async def whatsapp_webhook(agent_id: str, request: Request):
     # Load conversation history for this user
     history = get_wa_history(from_number, agent_id)
 
-    # Run agent with history
+    # Run agent in thread pool (blocking call — don't block async event loop)
     try:
-        reply_text = run_agent(agent_data, incoming_msg, None, history)
+        import asyncio
+        reply_text = await asyncio.to_thread(run_agent, agent_data, incoming_msg, None, history)
     except Exception as e:
         logger.error(f"WhatsApp agent error: {e}")
         reply_text = "Sorry, kuch masla aa gaya. Thodi der baad dobara try karein."
@@ -417,7 +418,7 @@ async def whatsapp_webhook(agent_id: str, request: Request):
         except Exception:
             pass
 
-    _send_whatsapp(from_number, reply_text)
+    await asyncio.to_thread(_send_whatsapp, from_number, reply_text)
     return {"status": "ok"}
 
 
