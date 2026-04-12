@@ -21,6 +21,21 @@ logger = logging.getLogger(__name__)
 _agent_cache: dict = {}   # agent_id → {"data": {...}, "ts": float}
 CACHE_TTL = 300           # seconds
 
+# ── WhatsApp conversation history cache (TTL = 30 min) ────────────────────────
+_wa_history: dict = {}    # "phone:agent_id" → {"history": [...], "ts": float}
+WA_HISTORY_TTL = 1800     # 30 minutes
+
+def get_wa_history(phone: str, agent_id: str) -> list:
+    key = f"{phone}:{agent_id}"
+    entry = _wa_history.get(key)
+    if entry and (time.time() - entry["ts"]) < WA_HISTORY_TTL:
+        return entry["history"]
+    return []
+
+def set_wa_history(phone: str, agent_id: str, history: list):
+    key = f"{phone}:{agent_id}"
+    _wa_history[key] = {"history": history, "ts": time.time()}
+
 def get_cached_agent(agent_id: str):
     entry = _agent_cache.get(agent_id)
     if entry and (time.time() - entry["ts"]) < CACHE_TTL:
@@ -372,12 +387,23 @@ async def whatsapp_webhook(agent_id: str, request: Request):
             _send_whatsapp(from_number, "Sorry, service temporarily unavailable.")
             return {"status": "limit_reached"}
 
-    # Run agent
+    # Load conversation history for this user
+    history = get_wa_history(from_number, agent_id)
+
+    # Run agent with history
     try:
-        reply_text = run_agent(agent_data, incoming_msg, None, [])
+        reply_text = run_agent(agent_data, incoming_msg, None, history)
     except Exception as e:
         logger.error(f"WhatsApp agent error: {e}")
         reply_text = "Sorry, kuch masla aa gaya. Thodi der baad dobara try karein."
+
+    # Update conversation history
+    history.append({"role": "user", "content": incoming_msg})
+    history.append({"role": "assistant", "content": reply_text})
+    # Keep last 20 messages only
+    if len(history) > 20:
+        history = history[-20:]
+    set_wa_history(from_number, agent_id, history)
 
     # Save message for usage tracking
     if owner_id:
